@@ -1,0 +1,12 @@
+{
+  "name": "Batch Template Renderer",
+  "id": "1540195968246673869",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"]
+  }
+}
