@@ -1,5 +1,9 @@
 export type SpreadsheetRow = Record<string, string>;
-export type FieldMapping = Record<string, string>;
+export type FieldMappingEntry = {
+  columns: string[];
+  separator: string;
+};
+export type FieldMapping = Record<string, FieldMappingEntry>;
 export type LayoutMode = "containers" | "single-frame" | "legacy";
 export type ExportMode = "combined-pdf" | "individual-pdfs";
 

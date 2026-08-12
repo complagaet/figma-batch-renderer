@@ -3,6 +3,7 @@ import readXlsxFile from "read-excel-file/browser";
 import {
   type ExportMode,
   type FieldMapping,
+  type FieldMappingEntry,
   type LayoutMode,
   type PluginToUiMessage,
   type SpreadsheetRow,
@@ -136,7 +137,32 @@ function autoColumnForField(field: string): string {
 }
 
 function mappedCount(): number {
-  return Object.values(mapping).filter(Boolean).length;
+  return Object.values(mapping).filter((entry) => entry.columns.some(Boolean)).length;
+}
+
+function mappingEntry(field: string): FieldMappingEntry {
+  const current = mapping[field];
+  if (current) {
+    if (current.columns.length === 0) current.columns = [""];
+    if (current.separator === undefined) current.separator = " ";
+    return current;
+  }
+  mapping[field] = { columns: [""], separator: " " };
+  return mapping[field];
+}
+
+function sanitizedMapping(): FieldMapping {
+  return Object.fromEntries(
+    Object.entries(mapping)
+      .map(([field, entry]) => [
+        field,
+        {
+          columns: entry.columns.filter(Boolean),
+          separator: entry.separator,
+        },
+      ] as const)
+      .filter(([, entry]) => entry.columns.length > 0),
+  );
 }
 
 function currentBatchSize(): number {
@@ -520,29 +546,72 @@ function renderMapping(): void {
     arrow.className = "mapping-arrow";
     arrow.textContent = "→";
 
-    const select = document.createElement("select");
-    select.dataset.field = field;
+    const controls = document.createElement("div");
+    controls.className = "mapping-controls";
 
-    const ignore = document.createElement("option");
-    ignore.value = "";
-    ignore.textContent = "Ignore";
-    select.appendChild(ignore);
+    const entry = mappingEntry(field);
+    entry.columns.forEach((currentColumn, columnIndex) => {
+      const columnRow = document.createElement("div");
+      columnRow.className = "mapping-column-row";
 
-    headers.forEach((header) => {
-      const option = document.createElement("option");
-      option.value = header;
-      option.textContent = header;
-      select.appendChild(option);
+      const select = document.createElement("select");
+      select.dataset.field = field;
+
+      const ignore = document.createElement("option");
+      ignore.value = "";
+      ignore.textContent = columnIndex === 0 ? "Ignore" : "No extra column";
+      select.appendChild(ignore);
+
+      headers.forEach((header) => {
+        const option = document.createElement("option");
+        option.value = header;
+        option.textContent = header;
+        select.appendChild(option);
+      });
+
+      select.value = currentColumn && headers.includes(currentColumn) ? currentColumn : "";
+      select.addEventListener("change", () => {
+        entry.columns[columnIndex] = select.value;
+        renderMapping();
+        updateMappingSummary();
+      });
+
+      if (columnIndex === entry.columns.length - 1) {
+        const addButton = document.createElement("button");
+        addButton.className = "add-column";
+        addButton.type = "button";
+        addButton.textContent = "+";
+        addButton.title = "Add another spreadsheet column";
+        addButton.addEventListener("click", () => {
+          entry.columns.push("");
+          renderMapping();
+        });
+        columnRow.append(select, addButton);
+      } else {
+        const spacer = document.createElement("span");
+        columnRow.append(select, spacer);
+      }
+
+      controls.appendChild(columnRow);
     });
 
-    const current = mapping[field];
-    select.value = current && headers.includes(current) ? current : "";
-    select.addEventListener("change", () => {
-      mapping[field] = select.value;
-      updateMappingSummary();
-    });
+    if (entry.columns.filter(Boolean).length > 1) {
+      const separatorRow = document.createElement("label");
+      separatorRow.className = "separator-row";
+      const separatorLabel = document.createElement("span");
+      separatorLabel.textContent = "Separator";
+      const separatorInput = document.createElement("input");
+      separatorInput.type = "text";
+      separatorInput.value = entry.separator;
+      separatorInput.placeholder = " ";
+      separatorInput.addEventListener("input", () => {
+        entry.separator = separatorInput.value;
+      });
+      separatorRow.append(separatorLabel, separatorInput);
+      controls.appendChild(separatorRow);
+    }
 
-    row.append(label, arrow, select);
+    row.append(label, arrow, controls);
     mappingList.appendChild(row);
   }
   updateMappingSummary();
@@ -679,7 +748,10 @@ function applySelectedSheet(index: number): void {
 
 function applyAutomaticMapping(): void {
   mapping = Object.fromEntries(
-    templateFields.map((field) => [field, autoColumnForField(field)]),
+    templateFields.map((field) => [
+      field,
+      { columns: [autoColumnForField(field)], separator: " " },
+    ]),
   );
   renderMapping();
 }
@@ -798,7 +870,7 @@ generateButton.addEventListener("click", () => {
   const pluginMessage: UiToPluginMessage = {
     type: "generate",
     rows: exportRows(),
-    mapping: Object.fromEntries(Object.entries(mapping).filter(([, column]) => column)),
+    mapping: sanitizedMapping(),
     skipRowIfEmptyColumn: skipRowIfEmptyColumn || undefined,
     batchLabel: batchLabel(),
     exportMode,

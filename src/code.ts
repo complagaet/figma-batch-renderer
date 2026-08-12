@@ -254,16 +254,24 @@ async function fillCard(
   row: SpreadsheetRow | null,
   mapping: FieldMapping,
 ): Promise<void> {
-  for (const [field, column] of Object.entries(mapping)) {
-    if (!column) continue;
+  for (const [field, mappingEntry] of Object.entries(mapping)) {
+    const columns = mappingEntry.columns.filter(Boolean);
+    if (columns.length === 0) continue;
     const node =
-      spec.mode === "containers"
+      spec.mode === "containers" || spec.mode === "single-frame"
         ? findContainerField(card, field)
         : findLegacyField(root, card.index, field);
     if (!node) continue;
 
-    const rawValue = row === null ? "" : row[column] ?? "";
-    await replaceText(node, rawValue.trim() || "—", `${card.index}:${field}`);
+    const values =
+      row === null
+        ? []
+        : columns
+            .map((column) => row[column] ?? "")
+            .map((value) => value.trim())
+            .filter(Boolean);
+    const rawValue = values.join(mappingEntry.separator ?? " ");
+    await replaceText(node, rawValue || "—", `${card.index}:${field}`);
   }
 }
 
@@ -274,13 +282,17 @@ function validateInput(
   filenameColumn?: string,
 ): void {
   if (rows.length === 0) throw new Error("The spreadsheet contains no data rows.");
-  const mappedColumns = Object.values(mapping).filter(Boolean);
+  const mappedColumns = Object.values(mapping).flatMap((entry) =>
+    entry.columns.filter(Boolean),
+  );
   if (mappedColumns.length === 0) throw new Error("Map at least one text layer to a spreadsheet column.");
 
   const availableColumns = new Set(Object.keys(rows[0]));
-  for (const [field, column] of Object.entries(mapping)) {
-    if (!availableColumns.has(column)) {
-      throw new Error(`Field "${field}" refers to missing column "${column}".`);
+  for (const [field, mappingEntry] of Object.entries(mapping)) {
+    for (const column of mappingEntry.columns.filter(Boolean)) {
+      if (!availableColumns.has(column)) {
+        throw new Error(`Field "${field}" refers to missing column "${column}".`);
+      }
     }
   }
   if (skipRowIfEmptyColumn && !availableColumns.has(skipRowIfEmptyColumn)) {

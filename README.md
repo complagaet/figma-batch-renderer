@@ -66,6 +66,8 @@ role                → Position
 id                  → Registration ID
 ```
 
+Each template text layer can use more than one spreadsheet column. Click `+` next to the column selector to add another column, then choose a separator. The default separator is a space, which is useful for joining values such as first name and last name into one text layer.
+
 The initial mapping is automatic when normalized names match. It also recognizes a few legacy aliases for older templates:
 
 - `country` → `Country` or `Country / Territory`;

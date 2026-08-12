@@ -118,7 +118,12 @@
         display: grid;
         grid-template-columns: minmax(110px, 1fr) 18px minmax(170px, 1.4fr);
         gap: 7px;
-        align-items: center;
+        align-items: start;
+        padding: 6px;
+        border-radius: 7px;
+      }
+      .mapping-row:nth-child(odd) {
+        background: rgba(128, 128, 128, 0.08);
       }
       .mapping-field {
         overflow: hidden;
@@ -128,6 +133,31 @@
       .mapping-arrow {
         color: var(--figma-color-text-tertiary);
         text-align: center;
+        padding-top: 8px;
+      }
+      .mapping-controls {
+        display: grid;
+        gap: 6px;
+      }
+      .mapping-column-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 30px;
+        gap: 6px;
+        align-items: center;
+      }
+      button.add-column {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border-radius: 7px;
+      }
+      .separator-row {
+        display: grid;
+        grid-template-columns: auto minmax(38px, 72px);
+        gap: 6px;
+        align-items: center;
+        color: var(--figma-color-text-secondary);
+        font-size: 11px;
       }
       select {
         width: 100%;
