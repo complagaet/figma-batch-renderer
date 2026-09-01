@@ -25,6 +25,8 @@ Template frame
 
 The names are not fixed: `name`, `organization`, `role`, `item_id`, `qr_code`, or any other text-layer names work. The plugin discovers them from the selected template and shows them in the mapping screen.
 
+Duplicate text-layer names are allowed. In the mapping UI, repeated layers are shown as `name` with a red occurrence suffix such as `(1)` and `(2)`. The suffix is only a visual disambiguator; it is not part of the Figma layer name and is not written into generated text.
+
 Keep each text layer styled exactly as it should appear in the result. The plugin changes only `characters`, so the layer's font, size, color, spacing, alignment, and resizing behavior remain intact.
 
 Slot numbers do not have to start at zero or be consecutive. Their numeric order defines the order in which spreadsheet rows are placed. Any number of slots per template frame is supported.
@@ -45,14 +47,16 @@ In combined PDF mode, large files can be generated in smaller batches to avoid F
 
 By default, the plugin exports one combined PDF for the selected batch.
 
-When the selected template has exactly one slot, either indexed (`slot_0`, `card_0`, `item_0`, or `0`) or the selected frame itself, the UI also enables **ZIP with one PDF per frame**. In this mode, every eligible row in the selected worksheet creates one generated frame and one `.pdf` inside a single downloaded `.zip` archive. Batch controls are hidden in this mode because the archive is meant to contain the full selected worksheet.
+When the selected template has exactly one slot, either indexed (`slot_0`, `card_0`, `item_0`, or `0`) or the selected frame itself, the UI also enables **ZIP with one file per frame**. In this mode, every eligible row in the selected worksheet creates one generated frame and one file inside a single downloaded `.zip` archive. PDF is the default format; PNG and JPG can be selected with a scale from `1x` to `10x`. Batch controls are disabled in this mode because the archive is meant to contain the full selected worksheet.
 
-Choose a spreadsheet column for file names. You can also add a prefix and suffix around the spreadsheet value, for example `abc_` + `Name From Table` -> `abc_Name From Table.pdf`. The final names are sanitized before being written into the archive:
+By default, the generated Figma page is deleted after export bytes are rendered and handed to the plugin UI for download. Disable **Delete generated page after export** when you want to inspect or keep the generated frames in the Figma document.
+
+Choose a spreadsheet column for file names. You can also add a prefix and suffix around the spreadsheet value, for example `abc_` + `Name From Table` -> `abc_Name From Table.pdf`, `abc_Name From Table.png`, or `abc_Name From Table.jpg`. The final names are sanitized before being written into the archive:
 
 - forbidden filename characters such as `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, and `|` are replaced;
 - control characters, leading/trailing dots, spaces, and dashes are removed;
-- a trailing `.pdf` from the spreadsheet value is removed before adding the real `.pdf` extension;
-- empty spreadsheet values fall back to `row-001.pdf`, `row-002.pdf`, etc., including any prefix/suffix;
+- a trailing `.pdf`, `.png`, `.jpg`, or `.jpeg` from the spreadsheet value is removed before adding the real extension;
+- empty spreadsheet values fall back to `row-001.pdf`, `row-002.pdf`, etc., `row-001.png`, `row-002.png`, etc., or `row-001.jpg`, `row-002.jpg`, etc., including any prefix/suffix;
 - reserved names like `CON`, `PRN`, `AUX`, `NUL`, `COM1`, and `LPT1` fall back to safe row names;
 - duplicate sanitized names get suffixes such as `-2`, `-3`.
 
@@ -116,7 +120,8 @@ In Figma Desktop:
 5. Drop a `.csv` or `.xlsx` file into the plugin.
 6. Choose the worksheet if the workbook has more than one.
 7. In combined mode, choose the batch size and batch number.
-8. If the template has one item slot, optionally choose **ZIP with one PDF per frame**, a filename column, and a filename prefix/suffix.
-9. Review the field mapping and click the generate button.
+8. If the template has one item slot, optionally choose **ZIP with one file per frame**, select PDF, PNG, or JPG, choose a filename column, and set an optional filename prefix/suffix.
+9. Leave **Delete generated page after export** enabled unless you want to keep generated frames in Figma.
+10. Review the field mapping and click the generate button.
 
-The plugin creates a new Figma page, selects all generated frames, and asks Figma to render each frame as PDF. In combined mode, it merges those pages into one `*-render.pdf`; in individual mode, it downloads one `.zip` containing sanitized `.pdf` files. Generated frames remain in the document for visual inspection, while the original template stays unchanged.
+The plugin creates a new Figma page, selects all generated frames, and asks Figma to render each frame. In combined mode, it renders PDF pages and merges them into one `*-render.pdf`; in individual mode, it downloads one `.zip` containing sanitized `.pdf`, `.png`, or `.jpg` files. The original template stays unchanged. Generated frames remain in the document only when cleanup is disabled.

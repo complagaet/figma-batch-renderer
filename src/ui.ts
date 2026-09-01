@@ -4,9 +4,11 @@ import {
   type ExportMode,
   type FieldMapping,
   type FieldMappingEntry,
+  type IndividualExportFormat,
   type LayoutMode,
   type PluginToUiMessage,
   type SpreadsheetRow,
+  type TemplateField,
   type UiToPluginMessage,
 } from "./shared";
 
@@ -34,10 +36,16 @@ const batchSizeSelect = document.querySelector<HTMLSelectElement>("#batch-size")
 const batchNumberSelect = document.querySelector<HTMLSelectElement>("#batch-number")!;
 const exportControls = document.querySelector<HTMLElement>("#export-controls")!;
 const exportModeSelect = document.querySelector<HTMLSelectElement>("#export-mode")!;
+const individualFormatRow = document.querySelector<HTMLElement>("#individual-format-row")!;
+const individualFormatSelect =
+  document.querySelector<HTMLSelectElement>("#individual-format")!;
+const pngScaleSelect = document.querySelector<HTMLSelectElement>("#png-scale")!;
 const filenameColumnSelect = document.querySelector<HTMLSelectElement>("#filename-column")!;
 const filenameAffixes = document.querySelector<HTMLElement>("#filename-affixes")!;
 const filenamePrefixInput = document.querySelector<HTMLInputElement>("#filename-prefix")!;
 const filenameSuffixInput = document.querySelector<HTMLInputElement>("#filename-suffix")!;
+const deleteGeneratedPageInput =
+  document.querySelector<HTMLInputElement>("#delete-generated-page")!;
 
 type RawWorksheet = {
   name: string;
@@ -49,13 +57,16 @@ type ZipSession = {
   filename: string;
   successMessage: string;
 };
+type RenderMappingOptions = {
+  preserveScroll?: boolean;
+};
 
 let rows: SpreadsheetRow[] = [];
 let headers: string[] = [];
 let unusableColumnMessages: string[] = [];
 let workbookSheets: RawWorksheet[] = [];
 let selectedSheetIndex = 0;
-let templateFields: string[] = [];
+let templateFields: TemplateField[] = [];
 let mapping: FieldMapping = {};
 let templateValid = false;
 let templateCardCount: number | null = null;
@@ -64,12 +75,25 @@ let skipRowIfEmptyColumn = "";
 let batchSize = "100";
 let batchIndex = 0;
 let exportMode: ExportMode = "combined-pdf";
+let individualFormat: IndividualExportFormat = "pdf";
+let pngScale = 1;
 let filenameColumn = "";
 let filenamePrefix = "";
 let filenameSuffix = "";
+let deleteGeneratedPage = true;
 let loadedFileName = "";
 let busy = false;
 let zipSession: ZipSession | null = null;
+
+function individualFormatUsesScale(): boolean {
+  return individualFormat === "png" || individualFormat === "jpg";
+}
+
+function templateFieldLabel(field: TemplateField): string {
+  return field.duplicateCount && field.duplicateCount > 1
+    ? `${field.name} (${field.duplicateIndex ?? 1})`
+    : field.name;
+}
 
 function comparable(value: string): string {
   return value
@@ -334,7 +358,7 @@ function safeDownloadStem(value: string): string {
 function startZipDownload(filename: string): void {
   const chunks: ArrayBuffer[] = [];
   const zip = new Zip((error, chunk, final) => {
-  if (error) {
+    if (error) {
       zipSession = null;
       busy = false;
       hideProgress();
@@ -365,11 +389,11 @@ function startZipDownload(filename: string): void {
   };
 }
 
-function addPdfToZip(filename: string, pdf: Uint8Array): void {
+function addFileToZip(filename: string, bytes: Uint8Array): void {
   if (!zipSession) return;
   const file = new ZipPassThrough(filename);
   zipSession.zip.add(file);
-  file.push(pdf, true);
+  file.push(bytes, true);
 }
 
 function finishZipDownload(message: string): void {
@@ -526,7 +550,9 @@ function renderPreview(): void {
   preview.hidden = false;
 }
 
-function renderMapping(): void {
+function renderMapping(options: RenderMappingOptions = {}): void {
+  const previousListScrollTop = mappingList.scrollTop;
+  const previousWindowScrollY = window.scrollY;
   mappingList.replaceChildren();
   mappingCard.hidden = templateFields.length === 0 || headers.length === 0;
 
@@ -540,7 +566,17 @@ function renderMapping(): void {
     row.className = "mapping-row";
 
     const label = document.createElement("code");
-    label.textContent = field;
+    label.className = "mapping-field";
+    label.title = templateFieldLabel(field);
+    const labelName = document.createElement("span");
+    labelName.textContent = field.name;
+    label.appendChild(labelName);
+    if (field.duplicateCount && field.duplicateCount > 1) {
+      const duplicateSuffix = document.createElement("span");
+      duplicateSuffix.className = "mapping-duplicate";
+      duplicateSuffix.textContent = ` (${field.duplicateIndex ?? 1})`;
+      label.appendChild(duplicateSuffix);
+    }
 
     const arrow = document.createElement("span");
     arrow.className = "mapping-arrow";
@@ -549,13 +585,13 @@ function renderMapping(): void {
     const controls = document.createElement("div");
     controls.className = "mapping-controls";
 
-    const entry = mappingEntry(field);
+    const entry = mappingEntry(field.id);
     entry.columns.forEach((currentColumn, columnIndex) => {
       const columnRow = document.createElement("div");
       columnRow.className = "mapping-column-row";
 
       const select = document.createElement("select");
-      select.dataset.field = field;
+      select.dataset.field = field.id;
 
       const ignore = document.createElement("option");
       ignore.value = "";
@@ -572,7 +608,7 @@ function renderMapping(): void {
       select.value = currentColumn && headers.includes(currentColumn) ? currentColumn : "";
       select.addEventListener("change", () => {
         entry.columns[columnIndex] = select.value;
-        renderMapping();
+        renderMapping({ preserveScroll: true });
         updateMappingSummary();
       });
 
@@ -584,7 +620,7 @@ function renderMapping(): void {
         addButton.title = "Add another spreadsheet column";
         addButton.addEventListener("click", () => {
           entry.columns.push("");
-          renderMapping();
+          renderMapping({ preserveScroll: true });
         });
         columnRow.append(select, addButton);
       } else {
@@ -613,6 +649,14 @@ function renderMapping(): void {
 
     row.append(label, arrow, controls);
     mappingList.appendChild(row);
+  }
+  if (options.preserveScroll) {
+    const restoreScroll = () => {
+      mappingList.scrollTop = previousListScrollTop;
+      window.scrollTo(window.scrollX, previousWindowScrollY);
+    };
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
   }
   updateMappingSummary();
 }
@@ -688,12 +732,18 @@ function renderExportControls(): void {
   });
 
   if (!headers.includes(filenameColumn)) filenameColumn = headers[0] ?? "";
+  const individualExport = exportMode === "individual-pdfs";
   exportModeSelect.value = exportMode;
+  individualFormatSelect.value = individualFormat;
+  pngScaleSelect.value = String(pngScale);
+  individualFormatRow.hidden = !individualExport;
+  pngScaleSelect.hidden = !individualExport || !individualFormatUsesScale();
   filenameColumnSelect.value = filenameColumn;
-  filenameColumnSelect.hidden = exportMode !== "individual-pdfs";
-  filenameAffixes.hidden = exportMode !== "individual-pdfs";
+  filenameColumnSelect.hidden = !individualExport;
+  filenameAffixes.hidden = !individualExport;
   filenamePrefixInput.value = filenamePrefix;
   filenameSuffixInput.value = filenameSuffix;
+  deleteGeneratedPageInput.checked = deleteGeneratedPage;
 }
 
 function applySelectedSheet(index: number): void {
@@ -706,6 +756,8 @@ function applySelectedSheet(index: number): void {
   unusableColumnMessages = [];
   mapping = {};
   skipRowIfEmptyColumn = "";
+  individualFormat = "pdf";
+  pngScale = 1;
   filenameColumn = "";
   filenamePrefix = "";
   filenameSuffix = "";
@@ -749,8 +801,8 @@ function applySelectedSheet(index: number): void {
 function applyAutomaticMapping(): void {
   mapping = Object.fromEntries(
     templateFields.map((field) => [
-      field,
-      { columns: [autoColumnForField(field)], separator: " " },
+      field.id,
+      { columns: [autoColumnForField(field.name)], separator: " " },
     ]),
   );
   renderMapping();
@@ -766,6 +818,8 @@ async function loadFile(file: File): Promise<void> {
   skipRowIfEmptyColumn = "";
   batchIndex = 0;
   exportMode = "combined-pdf";
+  individualFormat = "pdf";
+  pngScale = 1;
   filenameColumn = "";
   filenamePrefix = "";
   filenameSuffix = "";
@@ -842,6 +896,14 @@ exportModeSelect.addEventListener("change", () => {
   renderPreview();
   updateButton();
 });
+individualFormatSelect.addEventListener("change", () => {
+  individualFormat = individualFormatSelect.value as IndividualExportFormat;
+  renderExportControls();
+  updateButton();
+});
+pngScaleSelect.addEventListener("change", () => {
+  pngScale = Number(pngScaleSelect.value) || 1;
+});
 filenameColumnSelect.addEventListener("change", () => {
   filenameColumn = filenameColumnSelect.value;
   updateButton();
@@ -851,6 +913,9 @@ filenamePrefixInput.addEventListener("input", () => {
 });
 filenameSuffixInput.addEventListener("input", () => {
   filenameSuffix = filenameSuffixInput.value;
+});
+deleteGeneratedPageInput.addEventListener("change", () => {
+  deleteGeneratedPage = deleteGeneratedPageInput.checked;
 });
 skipRowColumnSelect.addEventListener("change", () => {
   skipRowIfEmptyColumn = skipRowColumnSelect.value;
@@ -864,7 +929,7 @@ generateButton.addEventListener("click", () => {
   updateButton();
   hideProgress();
   if (exportMode === "individual-pdfs") {
-    startZipDownload(`${safeDownloadStem(batchLabel())}-pdfs.zip`);
+    startZipDownload(`${safeDownloadStem(batchLabel())}-${individualFormat}s.zip`);
   }
   setMessage("Generating frames…");
   const pluginMessage: UiToPluginMessage = {
@@ -877,6 +942,12 @@ generateButton.addEventListener("click", () => {
     filenameColumn: exportMode === "individual-pdfs" ? filenameColumn : undefined,
     filenamePrefix: exportMode === "individual-pdfs" ? filenamePrefix : undefined,
     filenameSuffix: exportMode === "individual-pdfs" ? filenameSuffix : undefined,
+    individualFormat: exportMode === "individual-pdfs" ? individualFormat : undefined,
+    pngScale:
+      exportMode === "individual-pdfs" && individualFormatUsesScale()
+        ? pngScale
+        : undefined,
+    deleteGeneratedPage,
   };
   parent.postMessage({ pluginMessage }, "*");
 });
@@ -917,7 +988,7 @@ window.onmessage = (event: MessageEvent<{ pluginMessage?: PluginToUiMessage }>) 
       setMessage(pluginMessage.message, "success");
     }
   } else if (pluginMessage.type === "individual-file") {
-    addPdfToZip(pluginMessage.filename, pluginMessage.pdf);
+    addFileToZip(pluginMessage.filename, pluginMessage.bytes);
   } else if (pluginMessage.type === "error") {
     if (zipSession) {
       zipSession.zip.terminate();

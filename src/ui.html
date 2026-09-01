@@ -130,6 +130,10 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      .mapping-duplicate {
+        color: #f24822;
+        font-weight: 700;
+      }
       .mapping-arrow {
         color: var(--figma-color-text-tertiary);
         text-align: center;
@@ -205,6 +209,15 @@
         gap: 10px;
         align-items: center;
       }
+      .checkbox-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .checkbox-row input {
+        flex: none;
+        margin: 2px 0 0;
+      }
       .batch-grid {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -219,6 +232,16 @@
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         gap: 8px;
+      }
+      .individual-format {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(90px, 0.45fr);
+        gap: 8px;
+      }
+      .filename-affixes[hidden],
+      .individual-format[hidden],
+      #png-scale[hidden] {
+        display: none;
       }
     </style>
   </head>
@@ -267,14 +290,37 @@
           <span class="export-grid">
             <select id="export-mode">
               <option value="combined-pdf">One combined PDF</option>
-              <option value="individual-pdfs">ZIP with one PDF per frame</option>
+              <option value="individual-pdfs">ZIP with one file per frame</option>
             </select>
+            <span id="individual-format-row" class="individual-format" hidden>
+              <select id="individual-format">
+                <option value="pdf">PDF</option>
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+              </select>
+              <select id="png-scale" hidden>
+                <option value="1">1x</option>
+                <option value="2">2x</option>
+                <option value="3">3x</option>
+                <option value="4">4x</option>
+                <option value="5">5x</option>
+                <option value="6">6x</option>
+                <option value="7">7x</option>
+                <option value="8">8x</option>
+                <option value="9">9x</option>
+                <option value="10">10x</option>
+              </select>
+            </span>
             <select id="filename-column" hidden></select>
             <span id="filename-affixes" class="filename-affixes" hidden>
               <input id="filename-prefix" type="text" placeholder="Prefix, e.g. abc_" />
               <input id="filename-suffix" type="text" placeholder="Suffix" />
             </span>
           </span>
+        </label>
+        <label class="checkbox-row">
+          <input id="delete-generated-page" type="checkbox" checked />
+          <span><strong>Delete generated page after export</strong><br /><span class="muted">Keep generated frames only when you need to inspect them in Figma.</span></span>
         </label>
       </section>
 

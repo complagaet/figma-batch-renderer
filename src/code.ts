@@ -2,9 +2,11 @@ import { PDFDocument } from "pdf-lib";
 import {
   type ExportMode,
   type FieldMapping,
+  type IndividualExportFormat,
   type LayoutMode,
   type PluginToUiMessage,
   type SpreadsheetRow,
+  type TemplateField,
   type UiToPluginMessage,
 } from "./shared";
 
@@ -17,13 +19,17 @@ type CardDescriptor = {
 type TemplateSpec = {
   mode: LayoutMode;
   cards: CardDescriptor[];
-  fields: string[];
+  fields: TemplateField[];
   errors: string[];
+};
+type FieldOccurrence = TemplateField & {
+  node: TextNode;
 };
 
 const CARD_NAME_PATTERN = /^(?:(?:card|slot|item)[\s_-]*)?(\d+)[\s_-]*$/i;
 const LEGACY_FIELD_PATTERN = /^(\d+)_(.+)$/;
 const RESERVED_FILENAME_STEMS = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const FIELD_ID_SEPARATOR = "\u001f";
 
 figma.showUI(__html__, { width: 560, height: 760, themeColors: true });
 
@@ -61,6 +67,61 @@ function fieldName(node: TextNode): string {
   return node.name.trim() || node.characters.trim();
 }
 
+function fieldId(name: string, duplicateIndex: number): string {
+  return `${name}${FIELD_ID_SEPARATOR}${duplicateIndex}`;
+}
+
+function fieldDisplayName(field: TemplateField): string {
+  return field.duplicateCount && field.duplicateCount > 1
+    ? `${field.name} (${field.duplicateIndex ?? 1})`
+    : field.name;
+}
+
+function fieldOccurrences(root: TemplateNode | CardContainer): FieldOccurrence[] {
+  const nodes = textNodes(root)
+    .map((node) => ({ node, name: fieldName(node) }))
+    .filter((entry): entry is { node: TextNode; name: string } => entry.name.length > 0);
+  const counts = new Map<string, number>();
+  nodes.forEach(({ name }) => {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  });
+
+  const seen = new Map<string, number>();
+  return nodes.map(({ node, name }) => {
+    const duplicateIndex = (seen.get(name) ?? 0) + 1;
+    seen.set(name, duplicateIndex);
+    const duplicateCount = counts.get(name) ?? 1;
+    return {
+      id: fieldId(name, duplicateIndex),
+      name,
+      duplicateIndex,
+      duplicateCount,
+      node,
+    };
+  });
+}
+
+function mergeFields(occurrences: FieldOccurrence[]): TemplateField[] {
+  const fields = new Map<string, TemplateField>();
+  for (const occurrence of occurrences) {
+    const existing = fields.get(occurrence.id);
+    fields.set(occurrence.id, {
+      id: occurrence.id,
+      name: occurrence.name,
+      duplicateIndex: occurrence.duplicateIndex,
+      duplicateCount: Math.max(
+        existing?.duplicateCount ?? 1,
+        occurrence.duplicateCount ?? 1,
+      ),
+    });
+  }
+  return [...fields.values()].sort(
+    (left, right) =>
+      left.name.localeCompare(right.name, "en") ||
+      (left.duplicateIndex ?? 1) - (right.duplicateIndex ?? 1),
+  );
+}
+
 function inspectContainerTemplate(root: TemplateNode): TemplateSpec | null {
   const indexedContainers = root
     .findAll((node) => isCardContainer(node) && CARD_NAME_PATTERN.test(node.name.trim()))
@@ -75,7 +136,7 @@ function inspectContainerTemplate(root: TemplateNode): TemplateSpec | null {
 
   const errors: string[] = [];
   const seenIndices = new Set<number>();
-  const fields = new Set<string>();
+  const occurrences: FieldOccurrence[] = [];
 
   for (const card of indexedContainers) {
     if (seenIndices.has(card.index)) {
@@ -83,24 +144,15 @@ function inspectContainerTemplate(root: TemplateNode): TemplateSpec | null {
     }
     seenIndices.add(card.index);
 
-    const namesInCard = new Set<string>();
-    for (const node of textNodes(card.container)) {
-      const name = fieldName(node);
-      if (!name) continue;
-      if (namesInCard.has(name)) {
-        errors.push(`Item slot ${card.index} contains duplicate text layer "${name}"`);
-      }
-      namesInCard.add(name);
-      fields.add(name);
-    }
+    occurrences.push(...fieldOccurrences(card.container));
   }
 
-  if (fields.size === 0) errors.push("Item slot containers contain no text layers.");
+  if (occurrences.length === 0) errors.push("Item slot containers contain no text layers.");
 
   return {
     mode: "containers",
     cards: indexedContainers,
-    fields: [...fields].sort((left, right) => left.localeCompare(right, "en")),
+    fields: mergeFields(occurrences),
     errors,
   };
 }
@@ -129,34 +181,30 @@ function inspectLegacyTemplate(root: TemplateNode): TemplateSpec {
   return {
     mode: "legacy",
     cards,
-    fields: [...fields].sort((left, right) => left.localeCompare(right, "en")),
+    fields: [...fields]
+      .sort((left, right) => left.localeCompare(right, "en"))
+      .map((name) => ({
+        id: fieldId(name, 1),
+        name,
+        duplicateIndex: 1,
+        duplicateCount: 1,
+      })),
     errors,
   };
 }
 
 function inspectSingleFrameTemplate(root: TemplateNode): TemplateSpec {
-  const fields = new Set<string>();
-  const namesInFrame = new Set<string>();
+  const occurrences = fieldOccurrences(root);
   const errors: string[] = [];
 
-  for (const node of textNodes(root)) {
-    const name = fieldName(node);
-    if (!name) continue;
-    if (namesInFrame.has(name)) {
-      errors.push(`Template frame contains duplicate text layer "${name}"`);
-    }
-    namesInFrame.add(name);
-    fields.add(name);
-  }
-
-  if (fields.size === 0) {
+  if (occurrences.length === 0) {
     errors.push("Template frame contains no text layers.");
   }
 
   return {
     mode: "single-frame",
     cards: [{ index: 0, container: root }],
-    fields: [...fields].sort((left, right) => left.localeCompare(right, "en")),
+    fields: mergeFields(occurrences),
     errors,
   };
 }
@@ -233,9 +281,9 @@ async function replaceText(node: TextNode, value: string, label: string): Promis
   node.characters = value;
 }
 
-function findContainerField(card: CardDescriptor, field: string): TextNode | null {
+function findContainerField(card: CardDescriptor, field: TemplateField): TextNode | null {
   if (!card.container) return null;
-  return textNodes(card.container).find((node) => fieldName(node) === field) ?? null;
+  return fieldOccurrences(card.container).find((occurrence) => occurrence.id === field.id)?.node ?? null;
 }
 
 function findLegacyField(root: TemplateNode, cardIndex: number, field: string): TextNode | null {
@@ -254,13 +302,15 @@ async function fillCard(
   row: SpreadsheetRow | null,
   mapping: FieldMapping,
 ): Promise<void> {
-  for (const [field, mappingEntry] of Object.entries(mapping)) {
+  for (const [fieldId, mappingEntry] of Object.entries(mapping)) {
     const columns = mappingEntry.columns.filter(Boolean);
     if (columns.length === 0) continue;
+    const field = spec.fields.find((templateField) => templateField.id === fieldId);
+    if (!field) continue;
     const node =
       spec.mode === "containers" || spec.mode === "single-frame"
         ? findContainerField(card, field)
-        : findLegacyField(root, card.index, field);
+        : findLegacyField(root, card.index, field.name);
     if (!node) continue;
 
     const values =
@@ -271,7 +321,7 @@ async function fillCard(
             .map((value) => value.trim())
             .filter(Boolean);
     const rawValue = values.join(mappingEntry.separator ?? " ");
-    await replaceText(node, rawValue || "—", `${card.index}:${field}`);
+    await replaceText(node, rawValue || "—", `${card.index}:${fieldDisplayName(field)}`);
   }
 }
 
@@ -320,7 +370,7 @@ function safeFilenameStem(value: string, fallback: string): string {
     .replace(/\s+/g, " ")
     .replace(/-+/g, "-")
     .replace(/^[\s.-]+|[\s.-]+$/g, "")
-    .replace(/\.pdf$/i, "")
+    .replace(/\.(?:pdf|png|jpe?g)$/i, "")
     .trim()
     .slice(0, 120)
     .replace(/^[\s.-]+|[\s.-]+$/g, "");
@@ -329,9 +379,10 @@ function safeFilenameStem(value: string, fallback: string): string {
   return sanitized;
 }
 
-function uniquePdfFilenames(
+function uniqueExportFilenames(
   rows: SpreadsheetRow[],
   filenameColumn: string,
+  extension: IndividualExportFormat,
   filenamePrefix = "",
   filenameSuffix = "",
 ): string[] {
@@ -349,8 +400,37 @@ function uniquePdfFilenames(
     const stem = safeFilenameStem(rawStem, fallback);
     const nextCount = (counts.get(stem.toLocaleLowerCase()) ?? 0) + 1;
     counts.set(stem.toLocaleLowerCase(), nextCount);
-    return `${nextCount === 1 ? stem : `${stem}-${nextCount}`}.pdf`;
+    return `${nextCount === 1 ? stem : `${stem}-${nextCount}`}.${extension}`;
   });
+}
+
+function normalizedPngScale(value: number | undefined): number {
+  return Math.min(10, Math.max(1, Math.round(Number(value) || 1)));
+}
+
+async function removeGeneratedPageIfRequested(
+  outputPage: PageNode,
+  returnPage: PageNode,
+  template: TemplateNode,
+  enabled: boolean,
+): Promise<boolean> {
+  if (!enabled || outputPage.removed) return false;
+
+  try {
+    if (!returnPage.removed) {
+      await figma.setCurrentPageAsync(returnPage);
+      if (!template.removed) {
+        figma.currentPage.selection = [template];
+        figma.viewport.scrollAndZoomIntoView([template]);
+      }
+    }
+    outputPage.remove();
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    figma.notify(`Generated page could not be deleted: ${message}`, { error: true });
+    return false;
+  }
 }
 
 async function generate(
@@ -362,8 +442,16 @@ async function generate(
   filenameColumn?: string,
   filenamePrefix?: string,
   filenameSuffix?: string,
+  individualFormat: IndividualExportFormat = "pdf",
+  pngScale?: number,
+  deleteGeneratedPage = true,
 ): Promise<void> {
   validateInput(rows, mapping, skipRowIfEmptyColumn, filenameColumn);
+  const normalizedIndividualFormat: IndividualExportFormat =
+    individualFormat === "png" || individualFormat === "jpg"
+      ? individualFormat
+      : "pdf";
+  const pngScaleValue = normalizedPngScale(pngScale);
   const eligibleRows = skipRowIfEmptyColumn
     ? rows.filter((row) => Boolean((row[skipRowIfEmptyColumn] ?? "").trim()))
     : rows;
@@ -377,21 +465,23 @@ async function generate(
   }
   const template = selectedTemplate();
   if (!template) throw new Error("Select exactly one template frame or component.");
+  const sourcePage = figma.currentPage;
 
   const sourceSpec = inspectTemplate(template);
   if (sourceSpec.errors.length > 0) throw new Error(sourceSpec.errors.join(" · "));
 
-  const unknownFields = Object.keys(mapping).filter((field) => !sourceSpec.fields.includes(field));
+  const fieldsById = new Map(sourceSpec.fields.map((field) => [field.id, field]));
+  const unknownFields = Object.keys(mapping).filter((id) => !fieldsById.has(id));
   if (unknownFields.length > 0) {
     throw new Error(`Mapped fields are no longer present in the template: ${unknownFields.join(", ")}`);
   }
 
   const cardCount = sourceSpec.cards.length;
   if (exportMode === "individual-pdfs" && cardCount !== 1) {
-    throw new Error("Individual PDF export is available only when the template has exactly one item slot.");
+    throw new Error("Individual file export is available only when the template has exactly one item slot.");
   }
   if (exportMode === "individual-pdfs" && !filenameColumn) {
-    throw new Error("Choose a spreadsheet column for individual PDF filenames.");
+    throw new Error("Choose a spreadsheet column for individual file names.");
   }
 
   const pageCount = Math.ceil(eligibleRows.length / cardCount);
@@ -431,26 +521,42 @@ async function generate(
   figma.viewport.scrollAndZoomIntoView(clones);
 
   if (exportMode === "individual-pdfs") {
-    postProgress("Rendering PDFs into ZIP", 0, clones.length);
-    const filenames = uniquePdfFilenames(
+    const extension = normalizedIndividualFormat;
+    const formatLabel = extension.toUpperCase();
+    postProgress(`Rendering ${formatLabel} files into ZIP`, 0, clones.length);
+    const filenames = uniqueExportFilenames(
       eligibleRows,
       filenameColumn ?? "",
+      extension,
       filenamePrefix,
       filenameSuffix,
     );
     for (let index = 0; index < clones.length; index += 1) {
+      const bytes =
+        extension === "png" || extension === "jpg"
+          ? await clones[index].exportAsync({
+              format: extension === "jpg" ? "JPG" : "PNG",
+              constraint: { type: "SCALE", value: pngScaleValue },
+            })
+          : await clones[index].exportAsync({ format: "PDF" });
       post({
         type: "individual-file",
         filename: filenames[index],
-        pdf: await clones[index].exportAsync({ format: "PDF" }),
+        bytes,
       });
-      postProgress("Rendering PDFs into ZIP", index + 1, clones.length);
+      postProgress(`Rendering ${formatLabel} files into ZIP`, index + 1, clones.length);
     }
+    const removedGeneratedPage = await removeGeneratedPageIfRequested(
+      outputPage,
+      sourcePage,
+      template,
+      deleteGeneratedPage,
+    );
     post({
       type: "success",
-      message: `${clones.length} individual PDF file(s) generated.${skippedRowCount ? ` ${skippedRowCount} row(s) skipped because "${skipRowIfEmptyColumn}" was empty.` : ""}`,
+      message: `${clones.length} individual ${formatLabel} file(s) generated.${removedGeneratedPage ? " Generated Figma page deleted." : ""}${skippedRowCount ? ` ${skippedRowCount} row(s) skipped because "${skipRowIfEmptyColumn}" was empty.` : ""}`,
     });
-    figma.notify(`Generated ${clones.length} PDF file(s)`);
+    figma.notify(`Generated ${clones.length} ${formatLabel} file(s)`);
     return;
   }
 
@@ -464,6 +570,12 @@ async function generate(
     postProgress("Rendering and combining PDF pages", index + 1, clones.length);
   }
   const pdf = await mergedPdf.save();
+  const removedGeneratedPage = await removeGeneratedPageIfRequested(
+    outputPage,
+    sourcePage,
+    template,
+    deleteGeneratedPage,
+  );
 
   const safeBatchLabel = (batchLabel ?? "batch")
     .normalize("NFKC")
@@ -473,7 +585,7 @@ async function generate(
 
   post({
     type: "success",
-    message: `${eligibleRows.length} row(s) generated on ${pageCount} page(s), ${cardCount} item slot(s) per page.${skippedRowCount ? ` ${skippedRowCount} row(s) skipped because "${skipRowIfEmptyColumn}" was empty.` : ""}`,
+    message: `${eligibleRows.length} row(s) generated on ${pageCount} page(s), ${cardCount} item slot(s) per page.${removedGeneratedPage ? " Generated Figma page deleted." : ""}${skippedRowCount ? ` ${skippedRowCount} row(s) skipped because "${skipRowIfEmptyColumn}" was empty.` : ""}`,
     pdf,
     filename: `${safeBatchLabel || "batch"}-render.pdf`,
   });
@@ -492,6 +604,9 @@ figma.ui.onmessage = async (message: UiToPluginMessage) => {
       message.filenameColumn,
       message.filenamePrefix,
       message.filenameSuffix,
+      message.individualFormat,
+      message.pngScale,
+      message.deleteGeneratedPage,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

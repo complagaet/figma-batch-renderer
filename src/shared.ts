@@ -6,6 +6,13 @@ export type FieldMappingEntry = {
 export type FieldMapping = Record<string, FieldMappingEntry>;
 export type LayoutMode = "containers" | "single-frame" | "legacy";
 export type ExportMode = "combined-pdf" | "individual-pdfs";
+export type IndividualExportFormat = "pdf" | "png" | "jpg";
+export type TemplateField = {
+  id: string;
+  name: string;
+  duplicateIndex?: number;
+  duplicateCount?: number;
+};
 
 export type UiToPluginMessage = {
   type: "generate";
@@ -17,6 +24,9 @@ export type UiToPluginMessage = {
   filenameColumn?: string;
   filenamePrefix?: string;
   filenameSuffix?: string;
+  individualFormat?: IndividualExportFormat;
+  pngScale?: number;
+  deleteGeneratedPage?: boolean;
 };
 
 export type PluginToUiMessage =
@@ -25,7 +35,7 @@ export type PluginToUiMessage =
       valid: boolean;
       message: string;
       cardCount?: number;
-      fields?: string[];
+      fields?: TemplateField[];
       layoutMode?: LayoutMode;
     }
   | { type: "working"; message: string }
@@ -36,5 +46,5 @@ export type PluginToUiMessage =
       pdf?: Uint8Array;
       filename?: string;
     }
-  | { type: "individual-file"; pdf: Uint8Array; filename: string }
+  | { type: "individual-file"; bytes: Uint8Array; filename: string }
   | { type: "error"; message: string };
